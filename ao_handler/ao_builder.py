@@ -25,7 +25,6 @@ from ..time_utils.pendTimeLTPDA import pendTimeLTPDA
 from ..loaders.CAP_loader import loadCAP, DataBundle
 from ..loaders.IFO_loader import loadIFO
 from ..processing.calibration import get_calibration
-from ..processing.resample import downsample_aos, downsample_single_ao
 
 logger = logging.getLogger(__name__)
 
@@ -132,7 +131,6 @@ def loadIFO_ao(filepath: str, tstart: float, tstop: float, interp_param=None,
 
     # Build PHI ao
     t      = data[:, 0]
-    logger.info(t)
     phi    = data[:, 1] * TO_PHI
     t0     = pendTimeLTPDA(t[0])
     ao_fs  = 1.0 / (t[1] - t[0])

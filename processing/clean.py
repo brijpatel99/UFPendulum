@@ -260,55 +260,59 @@ def _compute_signal_combinations(sens: dict[str, ao], cfg: dict) -> dict[str, ao
 def _consolidate_groups(signals: dict[str, ao], sens: dict[str, ao], act: dict[str, ao], slow: dict[str, ao],
                         ifo_ao: Optional[ao], cfg: dict) -> tuple[dict, dict, dict, dict, Optional[ao]]:
  
-    fs         = ifo_ao.fs
- 
     do_signals = cfg['signal_combinations'].get('consolidate')
     do_sens    = cfg['sensing'].get('consolidate')
     do_act     = cfg['actuation'].get('consolidate')
     do_slow    = cfg['slow_data'].get('consolidate')
  
-    # _run_consolidate needs ifo_ao in scope — pass explicitly
-    def _run_consolidate(group: dict, label: str, ifo: Optional[ao]):
-        if not group:
-            logger.warning("'%s' group is empty — skipping consolidation", label)
-            return group, ifo
- 
-        aos_list = list(group.values())
-        names    = list(group.keys())
- 
-        if ifo is not None:
-            aos_list.append(ifo)
-            names.append('__ifo__')
- 
-        logger.info("Consolidating '%s' group (%d ao(s)%s, fs=%s)",label, len(group),
-                    " + IFO" if ifo is not None else "","%.4f Hz" % fs if fs else "max")
- 
-        result   = consolidate(*tuple(aos_list), fs=fs)
- 
-        out_group = {}
-        out_ifo   = ifo
-        for i, name in enumerate(names):
-            if name == '__ifo__':
-                out_ifo = result[i]
-            else:
-                out_group[name] = result[i]
- 
-        return out_group, out_ifo
-    
-    if do_signals:
-        signals, ifo_ao = _run_consolidate(signals, 'signals', ifo_ao)
-        logger.debug(signals)
-        logger.debug(ifo_ao)
-    if do_sens:
-        sens,    _ = _run_consolidate(sens,    'sens',    ifo_ao)
-        logger.debug(sens)
-    if do_act:
-        act,     _ = _run_consolidate(act,     'act',     ifo_ao)
-        logger.debug(act)
-    if do_slow:
-        slow,    _ = _run_consolidate(slow,    'slow',    ifo_ao)
- 
-    return signals, sens, act, slow, ifo_ao
+    # Build flat list of all aos to consolidate, tracking group membership
+    # so we can repack after. IFO is always included as reference.
+    all_aos   = []
+    all_names = []   # (group_label, key) tuples
+
+    def _add_group(group: dict, label: str, enabled: bool):
+        if enabled and group:
+            for name, a in group.items():
+                all_aos.append(a)
+                all_names.append((label, name))
+            logger.debug("Added '%s' group (%d ao(s)) to consolidation", label, len(group))
+        elif enabled and not group:
+            logger.warning("'%s' group enabled for consolidation but is empty", label)
+
+    _add_group(signals, 'signals', do_signals)
+    _add_group(sens,    'sens',    do_sens)
+    _add_group(act,     'act',     do_act)
+    _add_group(slow,    'slow',    do_slow)
+
+    if not all_aos:
+        logger.info("No groups enabled for consolidation — skipping")
+        return signals, sens, act, slow, ifo_ao
+
+    # Always append IFO last as reference
+    all_aos.append(ifo_ao)
+    all_names.append(('__ifo__', '__ifo__'))
+
+    logger.info("Consolidating %d ao(s) + IFO at fs=%.6f Hz (from IFO)",len(all_aos) - 1, ifo_ao.fs)
+
+    # Single consolidate call — fs taken from IFO
+    result = consolidate(*tuple(all_aos), fs=ifo_ao.fs)
+
+    # Repack results back into their original group dicts
+    out = {'signals': {}, 'sens': {}, 'act': {}, 'slow': {}}
+    out_ifo = ifo_ao
+
+    for i, (label, name) in enumerate(all_names):
+        if label == '__ifo__':
+            out_ifo = result[i]
+        else:
+            out[label][name] = result[i]
+
+    # Merge back — unconsolidated groups pass through unchanged
+    return (out['signals'] if do_signals else signals,
+            out['sens']    if do_sens    else sens,
+            out['act']     if do_act     else act,
+            out['slow']    if do_slow    else slow,
+            out_ifo)
 
 def _calibrate_signals_to_ifo(signals: dict[str, ao], ifo_ao: ao) -> dict[str, ao]:
     """
@@ -332,7 +336,8 @@ def _calibrate_signals_to_ifo(signals: dict[str, ao], ifo_ao: ao) -> dict[str, a
         try:
             pp = bilinfit([sig], ifo_ao)
             cal_sig = pp.eval([sig])
-            cal_sig.setName(name)
+            #cal_sig.setName(name)
+  
             calibrated[name] = cal_sig
             logger.info("Calibrated '%s' to IFO: coeff=%.6f, offset=%.6f", name, pp.y[0], pp.y[1])
         except Exception as e:

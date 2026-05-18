@@ -1,0 +1,115 @@
+# experiment_config.toml
+# Configuration for CAP data cleaning and signal combination pipeline.
+# Edit this file to reflect the current experimental configuration.
+# All calibration values and channel selections are set here.
+
+# ------------------------------------------------------------------ #
+# Sensing channels
+# ------------------------------------------------------------------ #
+[sensing]
+# Load sensing channels?
+load = true
+
+# Sensing channel names to load (this is the name that gets loaded initially)
+sensChannels = ['CH1', 'CH2', 'CH3Data', 'CH4Data']
+
+# Calibration values in V/m for each sensing channel (CH1–CH4)
+calib_vals  = [40.4138, 31.706, 15.4, 15.4]   # V/m
+calib_units = "V/m"
+
+# Consolidate sensing with IFO?
+consolidate = true
+
+# ------------------------------------------------------------------ #
+# Actuation channels
+# ------------------------------------------------------------------ #
+[actuation]
+# Load acutation channels?
+load = true
+
+# Actuation channel names to load (this is the name that gets loaded initially)
+actChannels = ['Elec1DCAct', 'Elec2DCAct', 'Elec3DCAct', 'Elec4DCAct']
+
+# Scale factor to convert raw actuation counts to volts
+scale       = 3276.7    # V^-1
+scale_units = "V^-1"
+
+# Consolidate actuation with IFO?
+consolidate = true
+
+# ------------------------------------------------------------------ #
+# SENS channel combinations for X and PHI motion
+#
+# LISAlike-only local x-position       : (D1+D2)/2
+# LISAlike-only phi                    : (D1-D2)/(2*arm)
+# 2-sensor bulk x-position             : ((D1+D2)/2 + D3)/2
+# 2-sensor phi (main phi readout)      : ((D1+D2)/2 - D3)/(2*arm)
+# 2-sensor differential x              : ((D1+D2)/2 - D3)/2
+# ------------------------------------------------------------------ #
+[signal_combinations]
+# Background on how motion is detected:
+# D1 = X1 - X4 should measure differntial voltage between two LISAlike electrodes
+# D2 = X2 - X3 should measure differntial voltage between two LISAlike electrodes
+# D3 = X+ - X- should measure differntial voltage between two simplified electrodes
+#    X4    X3
+#    ----  ----
+#    ----------
+#    |        |
+#    |LISAlike|
+#    |   TM   |
+#    ----------
+#    ----  ----
+#    X1    X2
+#
+# Imagine same setup as above for simplified TM but with just two electrodes X+ and X-
+# Need to know what channel is attached to which electrodes (more like two electrodes)
+# The four channels currently loaded are ['CH1', 'CH2', 'CH3Data', 'CH4Data'] (unfortunately)
+D1 = 'CH1'
+D2 = 'CH2'
+D3 = 'CH4Data'
+
+# Which combinations or signals to compute.
+# Options: [X_LL, PHI_LL, X_BULK, PHI, X_DIFF] (see above for calculations)
+signals = ['PHI','X_BULK']
+
+# Consolidate signals with IFO?
+consolidate = true
+
+# ------------------------------------------------------------------ #
+# Pendulum physical parameters
+# Override any value from PendulumParams defaults here.
+# Leave a field out to use the default value.
+# ------------------------------------------------------------------ #
+#[pendulum]
+#arm = 0.222     # m  — pendulum arm length
+#T0  = 3000      # s  — natural torsional period
+#Q   = 964       #     — quality factor
+#II  = 1.65e-2   # kg m^2 — moment of inertia
+
+# ------------------------------------------------------------------ #
+# Slow data
+# ------------------------------------------------------------------ #
+[slow_data]
+# Load slow data channels?
+load = true
+
+# Slow data to load
+slowChannels = ['slow_Temperature1(K)','slow_Temperature2(K)','slow_Temperature3(K)',
+                'slow_Temperature4(K)','slow_Temperature5(K)','slow_Temperature6(K)',
+                'slow_Temperature7(K)','slow_Temperature8(K)']
+
+# Optional explicit name mapping: raw key → friendly name.
+# Used to rename auto-detected channels in the output dict.
+# Any key not listed here keeps its original name.
+[slow_data.name_map]
+"slow_Temperature1(K)" = "Temp_LL_electrode1"
+"slow_Temperature2(K)" = "Temp_LL_electrode2"
+"slow_Temperature3(K)" = "Temp_LL_electrode3"
+"slow_Temperature4(K)" = "Temp_LL_electrode4"
+"slow_Temperature5(K)" = "Temp_S_electrode1"
+"slow_Temperature6(K)" = "Temp_S_electrode2"
+"slow_Temperature7(K)" = "Temp_baseplate"
+"slow_Temperature8(K)" = "Temp_lab"
+
+# Consolidate slow data with IFO?
+consolidate = false

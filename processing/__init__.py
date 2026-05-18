@@ -1,1 +1,1 @@
-from clean import clean_cap_data
+from .clean import clean_cap_data

@@ -21,13 +21,16 @@ NOTE: Values here reflect the most current known configuration.
 import logging
 import numpy as np
 from ltpda.ao import ao
+from ltpda import CData, TSData, FSData, XYData
 from ltpda.utils.unit import Unit
 
 logger = logging.getLogger(__name__)
 
 # Physical constants
-KB   = 1.38e-23   # Boltzmann constant (m^2 kg s^-2 K^-1)
-TEMP = 293.0      # Room temperature (K)
+KB          = 1.38e-23          # Boltzmann constant (m^2 kg s^-2 K^-1)
+TEMP        = 293.0             # Room temperature (K)
+C           = 299792458         # Speed of light (m s^-1)
+H_PLANCK    = 6.62607015e-34    # Plancks constant (m^2 kg s^-1)
 
 # Frequency axis for spectral quantities: 1e-6 to 100 Hz
 _F_VALS = np.logspace(-6, 2, num=801)
@@ -40,8 +43,8 @@ class PendulumParams:
     Base parameters can be overridden at construction or afterwards via
     direct attribute assignment followed by recompute().
 
-    Base parameters
-    ---------------
+    Base parameters Pendulum geometry/dynamics
+    -------------------------------------------
     II      : moment of inertia          (kg m^2)
     Q       : quality factor             (dimensionless)
     T0      : natural torsional period   (s)
@@ -74,8 +77,8 @@ class PendulumParams:
     w0      : natural angular frequency  (rad/s)
     gamma   : torsional spring constant  (kg m^2 s^-2 rad^-1)
     beta    : dissipative constant       (kg m^2 s^-1 rad^-1)
-    NtoLISA : torque to LISA accel. conversion factor
     H       : torque → angle transfer function ao (fsdata)
+    NtoLISA : torque to LISA accel. conversion factor
     SthN    : fiber thermal noise ASD    (kg m^2 s^-2 /rHz)
     ScapN   : capacitive readout noise ASD referred to torque
     SifoN   : IFO readout noise ASD referred to torque
@@ -90,9 +93,10 @@ class PendulumParams:
     """
 
     # ------------------------------------------------------------------ #
-    # Base parameter defaults
+    # Base parameter defaults and computed (from base)
     # ------------------------------------------------------------------ #
     _DEFAULTS = {
+        # Pendulum Geometry/Dynamics params
         'II':              (1.65e-2,   'kg m^2'),
         'Q':               (964,       ''),
         'T0':              (3000,      's'),
@@ -117,18 +121,38 @@ class PendulumParams:
         'C_tot_LISA':      (36.35e-12,   'F'),
     }
 
+    _COMPUTED = [
+        # Pendulum Dynamics 
+        'w0',       # Angular freq of pendulum
+        'gamma',    # Torsional spring constant: gamma = w0^2 * II  [kg m^2 s^-2 rad^-1]
+        'beta',     # Dissipative constant: beta = II * w0 / Q  [kg m^2 s^-1 rad^-1]
+    #    'H',        # Transfer function: torque → angle
+        # Noise
+        'NtoLISA',   # Torque to LISA acceleration conversion
+        'SthN',      # Thermal noise ASD: sqrt(4 * kb * T * gamma / (2pi * f * Q))
+    #    'ScapN',     # Capacitive readout noise referred to torque
+    #    'SifoN',     # IFO readout noise referred to torque
+        'SLISAa',    # LISA acceleration noise ASD (L3 proposal 2017 form)
+        'SLISAf',    # LISA force noise ASD
+        # Misc
+#        'f',        # Frequency axis ao (fsdata)
+        # 'kb',       # Boltzmann const [m^2 kg s^-2 K^-1]
+        # 'T',        # Temperature [K]
+    ]
+
     def __init__(self, **overrides):
         """
         Initialise pendulum parameters with optional overrides.
 
         Each override can be either:
         - a plain float/int (assumed same units as default)
-        - an ao scalar
+        - an ao
 
         Example:
             pp = PendulumParams(T0=2500, arm=0.200)
             pp = PendulumParams(T0=ao(2500, 's'))
         """
+
         self._set_base_params(overrides)
         self._compute_derived()
 
@@ -149,10 +173,17 @@ class PendulumParams:
 
     def __repr__(self):
         lines = ["PendulumParams:"]
+        lines.append("Base Params:")
         for name, (val, units) in self._DEFAULTS.items():
             current = getattr(self, name)
-            y = current.y[0] if hasattr(current.y, '__len__') else current.y
+            y = current.ydata()[0] if hasattr(current.ydata(), '__len__') else current.ydata()
             lines.append("  %-20s = %g %s" % (name, y, units))
+
+        lines.append("Computed Params:")
+        for name in self._COMPUTED:
+            current = getattr(self, name)
+            y = current.ydata()[0] if hasattr(current.ydata(), '__len__') else current.ydata()
+            lines.append("  %-20s = %g %s" % (name, y, current.yunits()))
         return "\n".join(lines)
 
     # ------------------------------------------------------------------ #
@@ -183,7 +214,7 @@ class PendulumParams:
         for name, (default_val, units) in self._DEFAULTS.items():
             if name in overrides:
                 val = overrides[name]
-                if isinstance(val, ao):
+                if isinstance(val, (CData, TSData, FSData, XYData)):
                     setattr(self, name, val)
                 else:
                     setattr(self, name, ao(vals=float(val), yunits=units))
@@ -203,6 +234,11 @@ class PendulumParams:
 
         kb = ao(KB,   yunits='m^2 kg s^-2 K^-1')
         T  = ao(TEMP, yunits='K')
+        # c  = ao(C, yunits='m s^-1')
+        # h  = ao(H_PLANCK, yunits='m^2 kg s^-1')
+        # lam_UV = ao(250e-9, yunits='m')
+        # nu_UV = ao(c/lam_UV, yunits='s^-1')
+        # E_UV = ao(h*nu_UV / lam_UV, yunits='eV')
 
         # Angular frequency
         self.w0 = (2 * np.pi / self.T0) * ao(1, yunits='rad')
@@ -210,12 +246,12 @@ class PendulumParams:
 
         # Torsional spring constant: gamma = w0^2 * II  [kg m^2 s^-2 rad^-1]
         self.gamma = (self.w0 ** 2) * self.II * ao(1, yunits='rad^(-3)')
-        self.gamma.yaxis.units = self.gamma.units.simplify()
+        self.gamma.setYunits(self.gamma.yunits().simplify())
         self.gamma.setName('Gamma')
 
         # Dissipative constant: beta = II * w0 / Q  [kg m^2 s^-1 rad^-1]
         self.beta = self.II * self.w0 / self.Q * ao(1, yunits='rad^(-1)')
-        self.beta.yaxis.units = self.beta.units.simplify()
+        self.beta.yaxis.units = self.beta.yunits().simplify()
         self.beta.setName('Beta')
 
         # Torque to LISA acceleration conversion
@@ -224,9 +260,9 @@ class PendulumParams:
 
         # Transfer function: torque → angle
         # H(f) = 1 / (gamma * (1 - (2pi*f/w0)^2 + i/Q))
-        self.H = ao(1) / (self.gamma * (ao(1) - (2 * np.pi * f / self.w0 * ao(1, yunits='rad')) ** 2 + ao(1j / self.Q.y)))
-        self.H.yaxis.units = self.H.units.simplify()
-        self.H.setName('Torque to angle transfer function')
+        # self.H = ao(1) / (self.gamma * (ao(1) - (2 * np.pi * f / self.w0 * ao(1, yunits='rad')) ** 2 + ao(1j / self.Q.y)))
+        # self.H.yaxis.units = self.H.yunits().simplify()
+        # self.H.setName('Torque to angle transfer function')
 
         # Thermal noise ASD: sqrt(4 * kb * T * gamma / (2pi * f * Q))
         self.SthN = (4 * kb * T * self.gamma / (2 * np.pi * f * self.Q)) ** 0.5
@@ -234,14 +270,14 @@ class PendulumParams:
         self.SthN.setName('Fiber thermal noise')
 
         # Capacitive readout noise referred to torque
-        self.ScapN = ((2 ** 0.5) * self.ncap / (2 * self.arm) / abs(self.H) * ao(1, yunits='rad'))
-        self.ScapN.yaxis.units = self.ScapN.units.simplify()
-        self.ScapN.setName('Readout noise (capacitive)')
+        # self.ScapN = ((2 ** 0.5) * self.ncap / (2 * self.arm) / abs(self.H) * ao(1, yunits='rad'))
+        # self.ScapN.yaxis.units = self.ScapN.yunits().simplify()
+        # self.ScapN.setName('Readout noise (capacitive)')
 
         # IFO readout noise referred to torque
-        self.SifoN = self.nifo / (2 * self.arm) / abs(self.H) * ao(1, yunits='rad')
-        self.SifoN.yaxis.units = self.SifoN.units.simplify()
-        self.SifoN.setName('Readout noise (interferometer)')
+        # self.SifoN = self.nifo / (2 * self.arm) / abs(self.H) * ao(1, yunits='rad')
+        # self.SifoN.yaxis.units = self.SifoN.yunits().simplify()
+        # self.SifoN.setName('Readout noise (interferometer)')
 
         # LISA acceleration noise ASD (L3 proposal 2017 form)
         self.SLISAa = self.LISAr * ((1 + (0.4e-3 / f) ** 2) ** 0.5 * (1 + (f / ao(8e-3, yunits='Hz')) ** 4) ** 0.5)
